@@ -141,7 +141,9 @@ public class PeerConnection {
 
     public void sendLine(String s) {
         if (!active) return;
+        if(writer == null) return;
         writer.println(s);
+        writer.flush();
     }
 
     public void close() {

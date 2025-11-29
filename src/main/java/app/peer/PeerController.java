@@ -28,13 +28,13 @@ public class PeerController {
     private Thread listenerThread;
     private volatile boolean listening = false;
     private volatile boolean manualDisconnect = false;
+    private volatile boolean firstConnect = true;
 
     private final Map<String, PeerConnection> peers = new HashMap<>();
     private final Map<PeerConnection, ReconnectInfo> reconnectTargets = new HashMap<>();
 
-    private final HBox typingBubble = new HBox();
-    private Label typingLabel = new Label("");
-    private long lastTypingTime = 0;
+    private final Map<String, HBox> typingBubbles = new HashMap<>();
+    private final Map<String, Long> lastTypingTime = new HashMap<>();
     private volatile boolean typingSent = false;
 
     @FXML
@@ -54,17 +54,6 @@ public class PeerController {
         btnConnect.setDisable(false);
         btnConnect.setManaged(true);
         btnConnect.setVisible(true);
-
-        typingLabel.setStyle("-fx-text-fill: gray; -fx-font-size: 11px;");
-
-        typingBubble.setPadding(new Insets(4));
-        typingBubble.setAlignment(Pos.CENTER_LEFT);
-        typingBubble.getChildren().add(typingLabel);
-        typingBubble.setVisible(false);
-
-        messageBox.getChildren().add(typingBubble);
-
-        startListener();
 
         chatField.textProperty().addListener((pbs, oldV, newV) -> onTyping());
     }
@@ -90,7 +79,7 @@ public class PeerController {
         if(local.isEmpty()) return;
         if (chatField.isDisable()) return;
 
-        lastTypingTime = System.currentTimeMillis();
+        lastTypingTime.put(local, System.currentTimeMillis());
         if(!typingSent) {
             typingSent = true;
 
@@ -106,7 +95,8 @@ public class PeerController {
                     Thread.sleep(1200);
                 } catch (Exception ignored) {}
 
-                if (System.currentTimeMillis() - lastTypingTime >= 1000) {
+                Long last = lastTypingTime.get(local);
+                if (last != null && System.currentTimeMillis() - last >= 1000) {
                     typingSent = false;
 
                     synchronized (peers) {
@@ -136,9 +126,15 @@ public class PeerController {
                     while (listening) {
                         try {
                             Socket incoming = listener.accept();
-                            // ❗ Incoming connection — jangan masukkan ke peers dulu
-                            // Masukkan di handshake setelah dapat username
-                            new PeerConnection(incoming, this);
+                            PeerConnection pc = new PeerConnection(incoming, this);
+
+                            String local = usernameField.getText().trim();
+                            if(!local.isEmpty()) {
+                                pc.sendLine("HELLO|" + local);
+                            } else {
+                                pc.sendLine("BYE|No username set");
+                                pc.close();
+                            }
                         } catch (SocketException se) {
                             break;
                         } catch (IOException e) {
@@ -172,11 +168,29 @@ public class PeerController {
     @FXML
     private void onConnect() {
         manualDisconnect = false;
+
         String target = ipField.getText().trim();
         String username = usernameField.getText().trim();
 
-        if (target.isEmpty() || username.isEmpty()) {
-            showAlert("Missing Info", "Please fill in both username and target IP:port!");
+        if(username.isEmpty()) {
+            showAlert("Missing info", "Username can't be empty!!");
+            if(firstConnect == false && listening) {
+                stopListener();
+                messageBox.getChildren().clear();
+                scrollBox.setVvalue(1.0);
+                firstConnect = true;
+            }
+            return;
+        }
+
+        if(target.isEmpty() && !username.isEmpty() && (firstConnect == true)) {
+            if(!listening) startListener();
+            firstConnect = false;
+            return;
+        }
+
+        if(target.isEmpty()) {
+            showAlert("WARNING", "Fill the IP and Port Field if you are not the host!!");
             return;
         }
 
@@ -292,13 +306,14 @@ public class PeerController {
         synchronized (peers) {
             for (PeerConnection p : peers.values()) {
                 p.sendLine("CHAT|" + username + "|" + msg);
+                p.sendLine("STOPTYPE|" + username);
             }
         }
 
         addMessageBubble("[" + time + "] You: " + msg, true, false);
         chatField.clear();
 
-        typingLabel.setText("");
+        typingSent = false;
     }
 
     // safe accessor untuk nama lokal
@@ -417,23 +432,34 @@ public class PeerController {
         }
     }
 
-    public void onPeerTyping (String username, PeerConnection pc) {
+    public void onPeerTyping(String username, PeerConnection pc) {
         Platform.runLater(() -> {
-            typingLabel.setText(username + " is typing...");
-            typingBubble.setVisible(true);
+            if (username == null || username.isEmpty()) return;
+            HBox bubble = typingBubbles.get(username);
+            if (bubble == null) {
+                Label lbl = new Label(username + " is typing...");
+                lbl.setStyle("-fx-text-fill: gray; -fx-font-size: 11px;");
+                bubble = new HBox(lbl);
+                bubble.setPadding(new Insets(4));
+                bubble.setAlignment(Pos.CENTER_LEFT);
+                typingBubbles.put(username, bubble);
 
-            messageBox.getChildren().remove(typingBubble);
-            messageBox.getChildren().add(typingBubble);
+                // tambahkan bubble ke ujung messageBox (atau di index tertentu).
+                messageBox.getChildren().add(bubble);
+            } else {
+                // bubble sudah ada — refresh posisinya ke bawah
+                messageBox.getChildren().remove(bubble);
+                messageBox.getChildren().add(bubble);
+            }
             scrollBox.setVvalue(1.0);
         });
     }
 
-    public void onPeerStopTyping (String username, PeerConnection pc) {
+    public void onPeerStopTyping(String username, PeerConnection pc) {
         Platform.runLater(() -> {
-            if((username + " is typing...").equals(typingLabel.getText())) {
-                typingBubble.setVisible(false);
-                typingLabel.setText("");
-                messageBox.getChildren().remove(typingBubble);
+            HBox bubble = typingBubbles.remove(username);
+            if (bubble != null) {
+                messageBox.getChildren().remove(bubble);
             }
         });
     }
@@ -479,11 +505,6 @@ public class PeerController {
             HBox container = new HBox(bubble);
             container.setPadding(new Insets(4));
             container.setAlignment(isOwnMessage ? Pos.CENTER_RIGHT : isServerMessage ? Pos.CENTER : Pos.CENTER_LEFT);
-
-            int insertIndex = messageBox.getChildren().size();
-            if (typingBubble.isVisible() && messageBox.getChildren().contains(typingBubble)) {
-                insertIndex = messageBox.getChildren().indexOf(typingBubble);
-            }
 
             messageBox.getChildren().add(container);
 
