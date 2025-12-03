@@ -44,6 +44,9 @@ public class PeerController {
     private Map<PeerConnection, String> incomingFileNames = new HashMap<>();
     private Map<PeerConnection, Long> incomingFileSizes = new HashMap<>();
     private Map<PeerConnection, Long> incomingReceived = new HashMap<>();
+    // tambah di PeerController fields
+    private Map<PeerConnection, javafx.scene.control.Label> incomingFileProgressLabels = new HashMap<>();
+
 
 
     @FXML
@@ -126,7 +129,8 @@ public class PeerController {
             File saveTo = chooser.showSaveDialog(null);
 
             if (saveTo == null) {
-                pc.sendLine("FILEEND"); // cancel
+                // user cancelled -> inform sender to stop
+                pc.sendLine("FILEREJECT");
                 return;
             }
 
@@ -136,7 +140,20 @@ public class PeerController {
             incomingFileSizes.put(pc, size);
             incomingReceived.put(pc, 0L);
 
-            addMessageBubble("[Receiving file: " + fileName + " (" + size + " bytes)]", false, true);
+            // create progress label in UI so user sees progress
+            Platform.runLater(() -> {
+                addMessageBubble("[Receiving file: " + fileName + " (0/" + size + " bytes)]", false, true);
+                Label progressLabel = new Label("Receiving " + fileName + ": 0%");
+                progressLabel.setWrapText(true);
+                incomingFileProgressLabels.put(pc, progressLabel);
+
+                HBox container = new HBox(progressLabel);
+                container.setPadding(new Insets(4));
+                container.setAlignment(Pos.CENTER_LEFT);
+                messageBox.getChildren().add(container);
+                scrollBox.setVvalue(1.0);
+            });
+
         } catch (Exception e) {
             addMessageBubble("[Error receiving file: " + e.getMessage() + "]", false, true);
         }
@@ -149,8 +166,22 @@ public class PeerController {
             if (fos != null) {
                 fos.write(chunk);
 
-                long rec = incomingReceived.get(pc) + chunk.length;
+                long rec = incomingReceived.getOrDefault(pc, 0L) + chunk.length;
                 incomingReceived.put(pc, rec);
+
+                // update progress label
+                Long total = incomingFileSizes.get(pc);
+                if (total != null) {
+                    final long receivedFinal = rec;
+                    final long totalFinal = total;
+                    Platform.runLater(() -> {
+                        Label pl = incomingFileProgressLabels.get(pc);
+                        if (pl != null) {
+                            int pct = (int) ((receivedFinal * 100) / Math.max(1, totalFinal));
+                            pl.setText("Receiving " + incomingFileNames.get(pc) + ": " + pct + "% (" + receivedFinal + "/" + totalFinal + " bytes)");
+                        }
+                    });
+                }
             }
         } catch (Exception e) {
             addMessageBubble("[File receive error: " + e.getMessage() + "]", false, true);
@@ -164,13 +195,23 @@ public class PeerController {
 
             String name = incomingFileNames.remove(pc);
             Long size = incomingFileSizes.remove(pc);
+            incomingReceived.remove(pc);
 
-            addMessageBubble("[File received: " + name + " (" + size + " bytes)]", false, true);
+            // remove progress label
+            Platform.runLater(() -> {
+                Label pl = incomingFileProgressLabels.remove(pc);
+                if (pl != null) {
+                    messageBox.getChildren().remove(pl.getParent()); // we added pl inside a HBox container
+                }
+                addMessageBubble("[File received: " + name + " (" + (size != null ? size : 0) + " bytes)]", false, true);
+                scrollBox.setVvalue(1.0);
+            });
 
         } catch (Exception e) {
             addMessageBubble("[File receive finalize error: " + e.getMessage() + "]", false, true);
         }
     }
+
 
     @FXML
     private void onSendFile() {
@@ -178,22 +219,19 @@ public class PeerController {
         File file = chooser.showOpenDialog(null);
         if (file == null) return;
 
-        try {
-            byte[] data = java.nio.file.Files.readAllBytes(file.toPath());
-            String fname = file.getName();
+        String fname = file.getName();
 
-            synchronized (peers) {
-                for (PeerConnection p : peers.values()) {
-                    p.sendFile(fname, data);
-                }
+        // notify UI immediately (optimistic)
+        addMessageBubble("[You: sending file " + fname + " to all peers...]", true, true);
+
+        // delegate streaming send to each PeerConnection so UI thread tidak terblokir
+        synchronized (peers) {
+            for (PeerConnection p : peers.values()) {
+                p.sendFileAsync(file);
             }
-
-            addMessageBubble("[You sent file: " + fname + "]", true, true);
-
-        } catch (Exception e) {
-            addMessageBubble("[Error sending file: " + e.getMessage() + "]", false, true);
         }
     }
+
 
 
     private void startListener() {

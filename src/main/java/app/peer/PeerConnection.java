@@ -21,6 +21,9 @@ public class PeerConnection {
     private Thread readerThread;
     private Thread pingThread;
     private Thread monitorThread;
+    // inside class PeerConnection
+    private volatile boolean remoteRejectedFile = false; // set true when remote sends FILEREJECT
+
 
     public PeerConnection(Socket socket, PeerController controller) throws IOException {
         this.socket = socket;
@@ -108,6 +111,13 @@ public class PeerConnection {
                         continue;
                     }
 
+                    if (line.startsWith("FILEREJECT")) {
+                        // remote refused current incoming file -> set flag for sender thread to notice
+                        remoteRejectedFile = true;
+                        continue;
+                    }
+
+
 
                     // fallback: treat as chat from unknown (legacy)
                     controller.onPeerMessage((remoteName != null ? remoteName : "Unknown") + ": " + line, this);
@@ -190,6 +200,56 @@ public class PeerConnection {
         }
 
         sendLine("FILEEND");
+    }
+
+    public void sendFileAsync(File file) {
+        if (!active) return;
+
+        new Thread(() -> {
+            FileInputStream fis = null;
+            try {
+                remoteRejectedFile = false; // reset per-transfer
+                long total = file.length();
+                String fname = file.getName();
+
+                // Inform receiver
+                sendLine("FILEINFO|" + fname + "|" + total);
+
+                fis = new FileInputStream(file);
+                int chunkSize = 12 * 1024; // raw bytes per chunk (12KB)
+                byte[] buf = new byte[chunkSize];
+                int read;
+
+                while ((read = fis.read(buf)) != -1) {
+                    if (!active) break;
+                    if (remoteRejectedFile) {
+                        // remote cancelled -> stop sending
+                        sendLine("FILEEND");
+                        return;
+                    }
+
+                    byte[] actual = (read == buf.length) ? buf : java.util.Arrays.copyOf(buf, read);
+                    String base64 = Base64.getEncoder().encodeToString(actual);
+
+                    // send as text line
+                    sendLine("FILEDATA|" + base64);
+
+                    // small sleep to avoid saturating writer & allow remote to respond (tune if needed)
+                    try { Thread.sleep(1); } catch (InterruptedException ignored) {}
+                }
+
+                // done
+                sendLine("FILEEND");
+
+            } catch (IOException e) {
+                // inform controller
+                if (controller != null) controller.addMessageBubble("[Error sending file: " + e.getMessage() + "]", false, true);
+            } finally {
+                if (fis != null) {
+                    try { fis.close(); } catch (IOException ignored) {}
+                }
+            }
+        }, "SendFile-" + file.getName() + "-" + socket.getRemoteSocketAddress()).start();
     }
 
 
