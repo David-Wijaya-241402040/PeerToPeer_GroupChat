@@ -2,6 +2,8 @@ package main.java.app.peer;
 
 import java.io.*;
 import java.net.Socket;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PeerConnection {
@@ -85,6 +87,28 @@ public class PeerConnection {
                         continue;
                     }
 
+                    if (line.startsWith("FILEINFO|")) {
+                        String[] p = line.split("\\|", 3);
+                        if (p.length >= 3) {
+                            String fileName = p[1];
+                            long fileSize = Long.parseLong(p[2]);
+                            controller.onIncomingFileStart(fileName, fileSize, this);
+                        }
+                        continue;
+                    }
+
+                    if (line.startsWith("FILEDATA|")) {
+                        String base64 = safeSubstring(line, 9);
+                        controller.onIncomingFileData(base64, this);
+                        continue;
+                    }
+
+                    if (line.startsWith("FILEEND")) {
+                        controller.onIncomingFileEnd(this);
+                        continue;
+                    }
+
+
                     // fallback: treat as chat from unknown (legacy)
                     controller.onPeerMessage((remoteName != null ? remoteName : "Unknown") + ": " + line, this);
                 }
@@ -145,6 +169,27 @@ public class PeerConnection {
         writer.println(s);
         writer.flush();
     }
+
+    public void sendFile(String fileName, byte[] data) {
+        if (!active) return;
+
+        sendLine("FILEINFO|" + fileName + "|" + data.length);
+
+        int chunkSize = 14000; // aman untuk TCP + base64
+        int offset = 0;
+
+        while (offset < data.length) {
+            int end = Math.min(offset + chunkSize, data.length);
+            byte[] chunk = Arrays.copyOfRange(data, offset, end);
+            String base64 = Base64.getEncoder().encodeToString(chunk);
+            sendLine("FILEDATA|" + base64);
+
+            offset = end;
+        }
+
+        sendLine("FILEEND");
+    }
+
 
     public void close() {
         if (!active) return;

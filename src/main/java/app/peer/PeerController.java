@@ -7,7 +7,10 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.*;
 import java.time.LocalTime;
@@ -36,6 +39,12 @@ public class PeerController {
     private final Map<String, HBox> typingBubbles = new HashMap<>();
     private final Map<String, Long> lastTypingTime = new HashMap<>();
     private volatile boolean typingSent = false;
+
+    private Map<PeerConnection, FileOutputStream> incomingFiles = new HashMap<>();
+    private Map<PeerConnection, String> incomingFileNames = new HashMap<>();
+    private Map<PeerConnection, Long> incomingFileSizes = new HashMap<>();
+    private Map<PeerConnection, Long> incomingReceived = new HashMap<>();
+
 
     @FXML
     private void initialize() {
@@ -109,6 +118,83 @@ public class PeerController {
             }).start();
         }
     }
+
+    public void onIncomingFileStart(String fileName, long size, PeerConnection pc) {
+        try {
+            FileChooser chooser = new FileChooser();
+            chooser.setInitialFileName(fileName);
+            File saveTo = chooser.showSaveDialog(null);
+
+            if (saveTo == null) {
+                pc.sendLine("FILEEND"); // cancel
+                return;
+            }
+
+            FileOutputStream fos = new FileOutputStream(saveTo);
+            incomingFiles.put(pc, fos);
+            incomingFileNames.put(pc, fileName);
+            incomingFileSizes.put(pc, size);
+            incomingReceived.put(pc, 0L);
+
+            addMessageBubble("[Receiving file: " + fileName + " (" + size + " bytes)]", false, true);
+        } catch (Exception e) {
+            addMessageBubble("[Error receiving file: " + e.getMessage() + "]", false, true);
+        }
+    }
+
+    public void onIncomingFileData(String base64, PeerConnection pc) {
+        try {
+            byte[] chunk = Base64.getDecoder().decode(base64);
+            FileOutputStream fos = incomingFiles.get(pc);
+            if (fos != null) {
+                fos.write(chunk);
+
+                long rec = incomingReceived.get(pc) + chunk.length;
+                incomingReceived.put(pc, rec);
+            }
+        } catch (Exception e) {
+            addMessageBubble("[File receive error: " + e.getMessage() + "]", false, true);
+        }
+    }
+
+    public void onIncomingFileEnd(PeerConnection pc) {
+        try {
+            FileOutputStream fos = incomingFiles.remove(pc);
+            if (fos != null) fos.close();
+
+            String name = incomingFileNames.remove(pc);
+            Long size = incomingFileSizes.remove(pc);
+
+            addMessageBubble("[File received: " + name + " (" + size + " bytes)]", false, true);
+
+        } catch (Exception e) {
+            addMessageBubble("[File receive finalize error: " + e.getMessage() + "]", false, true);
+        }
+    }
+
+    @FXML
+    private void onSendFile() {
+        FileChooser chooser = new FileChooser();
+        File file = chooser.showOpenDialog(null);
+        if (file == null) return;
+
+        try {
+            byte[] data = java.nio.file.Files.readAllBytes(file.toPath());
+            String fname = file.getName();
+
+            synchronized (peers) {
+                for (PeerConnection p : peers.values()) {
+                    p.sendFile(fname, data);
+                }
+            }
+
+            addMessageBubble("[You sent file: " + fname + "]", true, true);
+
+        } catch (Exception e) {
+            addMessageBubble("[Error sending file: " + e.getMessage() + "]", false, true);
+        }
+    }
+
 
     private void startListener() {
         new Thread(() -> {
@@ -489,10 +575,35 @@ public class PeerController {
         }
     }
 
+//    void addMessageBubble(String message, boolean isOwnMessage, boolean isServerMessage) {
+//        Platform.runLater(() -> {
+//            Label bubble = new Label(message);
+//            bubble.setWrapText(true);
+//
+//            bubble.setStyle(
+//                    isOwnMessage
+//                            ? "-fx-background-color: #FF5F1F; -fx-text-fill: white; -fx-padding: 8 12; -fx-background-radius: 12"
+//                            : isServerMessage
+//                            ? "-fx-background-color: #A9A9A9; -fx-text-fill: black; -fx-padding: 6 10; -fx-background-radius: 12; -fx-font-size: 10px"
+//                            : "-fx-background-color: #36454F; -fx-text-fill: white; -fx-padding: 8 12; -fx-background-radius: 12"
+//            );
+//
+//            HBox container = new HBox(bubble);
+//            container.setPadding(new Insets(4));
+//            container.setAlignment(isOwnMessage ? Pos.CENTER_RIGHT : isServerMessage ? Pos.CENTER : Pos.CENTER_LEFT);
+//
+//            messageBox.getChildren().add(container);
+//
+//            scrollBox.setVvalue(1.0);
+//        });
+//    }
+
     void addMessageBubble(String message, boolean isOwnMessage, boolean isServerMessage) {
         Platform.runLater(() -> {
             Label bubble = new Label(message);
             bubble.setWrapText(true);
+            bubble.setMaxWidth(350);   // ❗ biar teks panjang turun ke baris berikutnya
+            bubble.setMinHeight(Label.USE_PREF_SIZE);
 
             bubble.setStyle(
                     isOwnMessage
@@ -504,10 +615,15 @@ public class PeerController {
 
             HBox container = new HBox(bubble);
             container.setPadding(new Insets(4));
-            container.setAlignment(isOwnMessage ? Pos.CENTER_RIGHT : isServerMessage ? Pos.CENTER : Pos.CENTER_LEFT);
+            container.setFillHeight(true);  // ❗ penting biar wrap gak kepotong
+
+            container.setAlignment(
+                    isOwnMessage ? Pos.CENTER_RIGHT :
+                            isServerMessage ? Pos.CENTER :
+                                    Pos.CENTER_LEFT
+            );
 
             messageBox.getChildren().add(container);
-
             scrollBox.setVvalue(1.0);
         });
     }
