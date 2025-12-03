@@ -85,28 +85,30 @@ public class PeerConnection {
                         continue;
                     }
 
+                    // Di dalam startReader() method, UPDATE handler untuk file:
                     if (line.startsWith("FILE_META|")) {
-                        String[] parts = line.split("\\|", 5);
-                        if (parts.length == 5) {
+                        String[] parts = line.split("\\|", 6);
+                        if (parts.length >= 5) {
                             String fileId = parts[1];
                             String fileName = parts[2];
                             long fileSize = Long.parseLong(parts[3]);
                             String sender = parts[4];
+                            String checksum = parts.length > 5 ? parts[5] : null;
 
-                            // Panggil controller untuk handle file metadata
-                            controller.onFileMetadata(fileId, fileName, fileSize, sender, this);
+                            controller.onFileMetadata(fileId, fileName, fileSize, sender, checksum, this);
                         }
                         continue;
                     }
 
                     if (line.startsWith("FILE_CHUNK|")) {
-                        String[] parts = line.split("\\|", 4);
-                        if (parts.length == 4) {
+                        String[] parts = line.split("\\|", 5);
+                        if (parts.length == 5) {
                             String fileId = parts[1];
                             int chunkNumber = Integer.parseInt(parts[2]);
-                            String encodedChunk = parts[3];
+                            long totalChunks = Long.parseLong(parts[3]);
+                            String encodedChunk = parts[4];
 
-                            controller.onFileChunk(fileId, chunkNumber, encodedChunk, this);
+                            controller.onFileChunk(fileId, chunkNumber, totalChunks, encodedChunk, this);
                         }
                         continue;
                     }
@@ -124,8 +126,10 @@ public class PeerConnection {
                     }
 
                     if (line.startsWith("FILE_REJECT|")) {
-                        String fileId = safeSubstring(line, 12);
-                        controller.onFileReject(fileId, this);
+                        String[] parts = line.split("\\|", 3);
+                        String fileId = parts[1];
+                        String reason = parts.length > 2 ? parts[2] : null;
+                        controller.onFileReject(fileId, reason, this);
                         continue;
                     }
 

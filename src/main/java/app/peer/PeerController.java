@@ -95,13 +95,15 @@ public class PeerController {
         }
     }
 
-    // Handler untuk file transfer - TAMBAHKAN method ini
-    public void onFileMetadata(String fileId, String fileName, long fileSize, String sender, PeerConnection conn) {
-        fileTransferManager.handleFileMetadata(fileId, fileName, fileSize, sender, conn);
+    // Update handler methods di PeerController:
+    public void onFileMetadata(String fileId, String fileName, long fileSize, String sender,
+                               String checksum, PeerConnection conn) {
+        fileTransferManager.handleFileMetadata(fileId, fileName, fileSize, sender, checksum, conn);
     }
 
-    public void onFileChunk(String fileId, int chunkNumber, String encodedChunk, PeerConnection conn) {
-        fileTransferManager.handleFileChunk(fileId, chunkNumber, encodedChunk);
+    public void onFileChunk(String fileId, int chunkNumber, long totalChunks,
+                            String encodedChunk, PeerConnection conn) {
+        fileTransferManager.handleFileChunk(fileId, chunkNumber, totalChunks, encodedChunk);
     }
 
     public void onFileEnd(String fileId, PeerConnection conn) {
@@ -112,8 +114,13 @@ public class PeerController {
         fileTransferManager.handleFileAccept(fileId, conn);
     }
 
-    public void onFileReject(String fileId, PeerConnection conn) {
-        fileTransferManager.handleFileReject(fileId, conn);
+    public void onFileReject(String fileId, String reason, PeerConnection conn) {
+        fileTransferManager.handleFileReject(fileId, reason, conn);
+    }
+
+    // Tambahkan method untuk upload progress (optional)
+    public void updateUploadProgress(String fileId, double progress, String recipient) {
+        // Optional: Implement jika ingin show upload progress
     }
 
     // Method untuk memilih dan mengirim file
@@ -141,6 +148,14 @@ public class PeerController {
         File selectedFile = fileChooser.showOpenDialog(null);
 
         if (selectedFile != null) {
+            // Di method onSendFile(), tambahkan validasi:
+            if (selectedFile.length() > 100 * 1024 * 1024) { // 100MB
+                showAlert("File Too Large",
+                        "File size cannot exceed 100MB. Selected file: " +
+                                formatFileSize(selectedFile.length()));
+                return;
+            }
+
             // Buat daftar penerima
             List<String> recipients = new ArrayList<>();
             recipients.add("All Peers");
@@ -475,18 +490,52 @@ public class PeerController {
         }, "OutgoingConnector-" + target).start();
     }
 
+    // Di PeerController.java, perbaiki method onDisconnect dan closeAllPeers:
     @FXML
     private void onDisconnect() {
-        new Thread(() -> {
-            manualDisconnect = true;
-            closeAllPeers();
-            userDisconnectAll();
+        manualDisconnect = true;
 
-            Platform.runLater(() -> {
-                addMessageBubble("[System] Disconnected.", false, true);
-                resetUI();
-            });
-        }).start();
+        // Shutdown file transfer manager dulu
+        if (fileTransferManager != null) {
+            fileTransferManager.shutdown();
+        }
+
+        // Close semua peers
+        closeAllPeers();
+
+        // Stop listener
+        stopListener();
+
+        Platform.runLater(() -> {
+            addMessageBubble("[System] Disconnected from all peers.", false, true);
+            resetUI();
+
+            // Clear semua state
+            peers.clear();
+            reconnectTargets.clear();
+            typingBubbles.clear();
+            lastTypingTime.clear();
+            downloadProgressBars.clear();
+        });
+    }
+
+    private void closeAllPeers() {
+        List<PeerConnection> peersToClose;
+        synchronized (peers) {
+            peersToClose = new ArrayList<>(peers.values());
+            peers.clear(); // Clear dulu untuk menghindari race condition
+        }
+
+        for (PeerConnection p : peersToClose) {
+            try {
+                p.sendLine("BYE|" + getLocalUsernameSafe());
+                Thread.sleep(100); // Kasih waktu untuk kirim BYE
+                p.close();
+            } catch (Exception ignored) {}
+        }
+
+        // Clear reconnect targets
+        reconnectTargets.clear();
     }
 
     @FXML
@@ -541,6 +590,7 @@ public class PeerController {
         Platform.runLater(() -> {
             chatField.setDisable(false);
             btnSend.setDisable(false);
+            btnFile.setDisable(false);
 
             btnDisconnect.setDisable(false);
             btnDisconnect.setManaged(true);
@@ -617,15 +667,6 @@ public class PeerController {
         }
     }
 
-    private void closeAllPeers() {
-        synchronized (peers) {
-            for (PeerConnection p : new ArrayList<>(peers.values())) {
-                try { p.close(); } catch (Exception ignored) {}
-            }
-            peers.clear();
-        }
-    }
-
     public void onPeerTyping(String username, PeerConnection pc) {
         Platform.runLater(() -> {
             if (username == null || username.isEmpty()) return;
@@ -664,23 +705,38 @@ public class PeerController {
     }
 
     private void resetUI() {
-        usernameField.setDisable(false);
-        ipField.setDisable(false);
+        Platform.runLater(() -> {
+            usernameField.setDisable(false);
+            ipField.setDisable(false);
+            ipField.clear();
 
-        chatField.setDisable(true);
-        btnSend.setDisable(true);
+            chatField.setDisable(true);
+            chatField.clear();
+            btnSend.setDisable(true);
+            if (btnFile != null) btnFile.setDisable(true);
 
-        btnDisconnect.setDisable(true);
-        btnDisconnect.setManaged(false);
-        btnDisconnect.setVisible(false);
+            btnDisconnect.setDisable(true);
+            btnDisconnect.setManaged(false);
+            btnDisconnect.setVisible(false);
 
-        btnConnect.setDisable(false);
-        btnConnect.setManaged(true);
-        btnConnect.setVisible(true);
+            btnConnect.setDisable(false);
+            btnConnect.setManaged(true);
+            btnConnect.setVisible(true);
 
-        if (!listening) {
-            startListener();
-        }
+            // Clear messages
+            messageBox.getChildren().clear();
+
+            // Clear typing indicators
+            typingBubbles.clear();
+
+            // Clear download progress
+            downloadProgressBars.clear();
+
+            // Restart listener jika belum listening
+            if (!listening) {
+                startListener();
+            }
+        });
     }
 
     void addMessageBubble(String message, boolean isOwnMessage, boolean isServerMessage) {

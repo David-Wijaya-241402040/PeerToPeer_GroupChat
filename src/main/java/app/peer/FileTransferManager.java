@@ -1,9 +1,7 @@
-// File: FileTransferManager.java
 package main.java.app.peer;
 
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import java.io.*;
 import java.nio.file.Files;
@@ -23,16 +21,18 @@ public class FileTransferManager {
     private final Map<String, FileTransfer> pendingDownloads;
     private final Map<String, FileTransfer> pendingUploads;
     private final String downloadDirectory;
+    private static final int CHUNK_SIZE = 32 * 1024; // 32KB - optimal size
+    private static final int MAX_RETRIES = 3;
 
     public FileTransferManager(PeerController controller) {
         this.controller = controller;
-        this.executorService = Executors.newCachedThreadPool();
+        this.executorService = Executors.newFixedThreadPool(4); // Fixed thread pool
         this.pendingDownloads = new ConcurrentHashMap<>();
         this.pendingUploads = new ConcurrentHashMap<>();
 
-        // Buat folder download di Documents/PeerChatDownloads/
+        // Buat folder download di Desktop/PeerChatDownloads/
         this.downloadDirectory = System.getProperty("user.home") +
-                File.separator + "Documents" +
+                File.separator + "Desktop" +
                 File.separator + "PeerChatDownloads" +
                 File.separator;
 
@@ -42,11 +42,11 @@ public class FileTransferManager {
                 Files.createDirectories(downloadPath);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Error creating download directory: " + e.getMessage());
         }
     }
 
-    // Kirim file ke satu peer
+    // Kirim file ke satu peer - DIPERBAIKI
     public void sendFile(File file, PeerConnection peer) {
         String fileId = UUID.randomUUID().toString();
         FileTransfer upload = new FileTransfer(fileId, file.getName(), file.length(),
@@ -54,50 +54,112 @@ public class FileTransferManager {
         pendingUploads.put(fileId, upload);
 
         executorService.execute(() -> {
-            try {
-                // Kirim metadata file
-                String metadata = String.format("FILE_META|%s|%s|%d|%s",
-                        fileId,
-                        file.getName(),
-                        file.length(),
-                        controller.getLocalUsernameSafe());
+            int retryCount = 0;
+            boolean success = false;
 
-                peer.sendLine(metadata);
+            while (retryCount < MAX_RETRIES && !success) {
+                try {
+                    // 1. Kirim metadata file
+                    String metadata = String.format("FILE_META|%s|%s|%d|%s|%s",
+                            fileId,
+                            file.getName(),
+                            file.length(),
+                            controller.getLocalUsernameSafe(),
+                            getFileChecksum(file));
 
-                Platform.runLater(() -> {
-                    controller.addMessageBubble(
-                            "[System] Sending file '" + file.getName() + "' to " + peer.getRemoteName(),
-                            false, true);
-                });
+                    if (!sendWithRetry(peer, metadata, 3)) {
+                        retryCount++;
+                        continue;
+                    }
 
-                // Tunggu 2 detik untuk konfirmasi
-                Thread.sleep(2000);
+                    Platform.runLater(() -> {
+                        controller.addMessageBubble(
+                                "[System] Sending file '" + file.getName() +
+                                        "' (" + formatFileSize(file.length()) + ") to " + peer.getRemoteName(),
+                                false, true);
+                    });
 
-                // Jika masih pending, lanjutkan pengiriman
-                if (pendingUploads.containsKey(fileId)) {
-                    // Baca dan kirim file dalam chunks
-                    try (FileInputStream fis = new FileInputStream(file)) {
-                        byte[] buffer = new byte[1024 * 8]; // 8KB chunks
-                        int bytesRead;
+                    // 2. Tunggu konfirmasi (timeout 10 detik)
+                    long startTime = System.currentTimeMillis();
+                    boolean accepted = false;
+
+                    while (System.currentTimeMillis() - startTime < 10000) {
+                        if (!pendingUploads.containsKey(fileId)) {
+                            // File ditolak atau error
+                            Platform.runLater(() -> {
+                                controller.addMessageBubble(
+                                        "[System] File '" + file.getName() + "' was rejected by " + peer.getRemoteName(),
+                                        false, true);
+                            });
+                            return;
+                        }
+
+                        FileTransfer currentUpload = pendingUploads.get(fileId);
+                        if (currentUpload != null && currentUpload.isAccepted()) {
+                            accepted = true;
+                            break;
+                        }
+                        Thread.sleep(100);
+                    }
+
+                    if (!accepted) {
+                        Platform.runLater(() -> {
+                            controller.addMessageBubble(
+                                    "[System] No response from " + peer.getRemoteName() +
+                                            " for file '" + file.getName() + "'",
+                                    false, true);
+                        });
+                        pendingUploads.remove(fileId);
+                        return;
+                    }
+
+                    // 3. Kirim file dalam chunks
+                    try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+                        long fileSize = file.length();
+                        long totalChunks = (fileSize + CHUNK_SIZE - 1) / CHUNK_SIZE;
                         int chunkNumber = 0;
 
-                        while ((bytesRead = fis.read(buffer)) != -1) {
-                            // Encode chunk ke base64
+                        byte[] buffer = new byte[CHUNK_SIZE];
+
+                        while (chunkNumber < totalChunks) {
+                            // Baca chunk
+                            raf.seek(chunkNumber * (long) CHUNK_SIZE);
+                            int bytesRead = raf.read(buffer);
+
+                            if (bytesRead <= 0) break;
+
+                            // Encode chunk (gunakan base64 untuk reliable transfer)
                             byte[] chunkData = new byte[bytesRead];
                             System.arraycopy(buffer, 0, chunkData, 0, bytesRead);
                             String encodedChunk = Base64.getEncoder().encodeToString(chunkData);
 
-                            // Kirim chunk
-                            String chunkMessage = String.format("FILE_CHUNK|%s|%d|%s",
-                                    fileId, chunkNumber, encodedChunk);
-                            peer.sendLine(chunkMessage);
+                            // Kirim chunk dengan retry
+                            String chunkMessage = String.format("FILE_CHUNK|%s|%d|%d|%s",
+                                    fileId, chunkNumber, totalChunks, encodedChunk);
+
+                            if (!sendWithRetry(peer, chunkMessage, 2)) {
+                                // Skip chunk ini untuk retry
+                                Thread.sleep(100);
+                                continue;
+                            }
+
+                            // Update progress
+                            double progress = (double) (chunkNumber + 1) / totalChunks;
+                            Platform.runLater(() -> {
+                                controller.updateUploadProgress(fileId, progress, peer.getRemoteName());
+                            });
 
                             chunkNumber++;
-                            Thread.sleep(5); // Delay kecil
+
+                            // Delay kecil untuk flow control
+                            Thread.sleep(10);
                         }
 
-                        // Kirim tanda selesai
-                        peer.sendLine(String.format("FILE_END|%s", fileId));
+                        // 4. Kirim tanda selesai
+                        String endMessage = String.format("FILE_END|%s", fileId);
+                        sendWithRetry(peer, endMessage, 3);
+
+                        success = true;
 
                         Platform.runLater(() -> {
                             controller.addMessageBubble(
@@ -105,16 +167,34 @@ public class FileTransferManager {
                                     false, true);
                         });
 
-                        // Bersihkan dari pending uploads setelah 10 detik
-                        Thread.sleep(10000);
+                        // Cleanup
+                        Thread.sleep(5000);
                         pendingUploads.remove(fileId);
+
+                    } catch (Exception e) {
+                        System.err.println("Error reading/sending file chunks: " + e.getMessage());
+                        retryCount++;
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("Send file error (attempt " + (retryCount + 1) + "): " + e.getMessage());
+                    retryCount++;
+
+                    if (retryCount < MAX_RETRIES) {
+                        try {
+                            Thread.sleep(1000 * retryCount); // Exponential backoff
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
                 }
+            }
 
-            } catch (Exception e) {
+            if (!success) {
                 Platform.runLater(() -> {
                     controller.addMessageBubble(
-                            "[Error] Failed to send file: " + e.getMessage(),
+                            "[Error] Failed to send file '" + file.getName() +
+                                    "' to " + peer.getRemoteName() + " after " + MAX_RETRIES + " attempts",
                             false, true);
                 });
                 pendingUploads.remove(fileId);
@@ -122,7 +202,28 @@ public class FileTransferManager {
         });
     }
 
-    // Kirim file ke semua peer
+    // Helper method untuk kirim dengan retry
+    private boolean sendWithRetry(PeerConnection peer, String message, int maxRetries) {
+        for (int i = 0; i < maxRetries; i++) {
+            try {
+                peer.sendLine(message);
+                return true;
+            } catch (Exception e) {
+                if (i == maxRetries - 1) {
+                    System.err.println("Failed to send message after " + maxRetries + " retries: " + message);
+                } else {
+                    try {
+                        Thread.sleep(100 * (i + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // Kirim file ke semua peer - DIPERBAIKI
     public void sendFileToAll(File file) {
         Map<String, PeerConnection> peers = controller.getPeers();
         if (peers.isEmpty()) {
@@ -134,13 +235,35 @@ public class FileTransferManager {
             return;
         }
 
+        Platform.runLater(() -> {
+            controller.addMessageBubble(
+                    "[System] Sending file '" + file.getName() +
+                            "' (" + formatFileSize(file.length()) + ") to " + peers.size() + " peer(s)",
+                    false, true);
+        });
+
         for (PeerConnection peer : peers.values()) {
             sendFile(file, peer);
         }
     }
 
-    // Handle incoming file metadata
-    public void handleFileMetadata(String fileId, String fileName, long fileSize, String sender, PeerConnection conn) {
+    // Handle incoming file metadata - DIPERBAIKI
+    public void handleFileMetadata(String fileId, String fileName, long fileSize, String sender,
+                                   String checksum, PeerConnection conn) {
+        // Validasi file size (max 100MB untuk safety)
+        if (fileSize > 100 * 1024 * 1024) {
+            Platform.runLater(() -> {
+                controller.addMessageBubble(
+                        "[System] File '" + fileName + "' too large (" +
+                                formatFileSize(fileSize) + "). Maximum 100MB allowed.",
+                        false, true);
+            });
+
+            String rejectMsg = String.format("FILE_REJECT|%s|TOO_LARGE", fileId);
+            conn.sendLine(rejectMsg);
+            return;
+        }
+
         Platform.runLater(() -> {
             // Tampilkan dialog konfirmasi download
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
@@ -157,22 +280,23 @@ public class FileTransferManager {
             alert.showAndWait().ifPresent(buttonType -> {
                 if (buttonType == downloadButton) {
                     // Simpan info transfer untuk menerima file
-                    FileTransfer transfer = new FileTransfer(fileId, fileName, fileSize, sender);
+                    FileTransfer transfer = new FileTransfer(fileId, fileName, fileSize, sender, checksum);
                     pendingDownloads.put(fileId, transfer);
 
                     // Kirim konfirmasi ke pengirim
                     String acceptMsg = String.format("FILE_ACCEPT|%s", fileId);
                     conn.sendLine(acceptMsg);
 
-                    controller.addMessageBubble(
-                            "[System] Downloading file '" + fileName + "' from " + sender,
-                            false, true);
-
                     // Tampilkan progress bar
                     controller.showDownloadProgress(fileId, fileName, sender, fileSize);
+
+                    controller.addMessageBubble(
+                            "[System] Downloading file '" + fileName + "' (" +
+                                    formatFileSize(fileSize) + ") from " + sender,
+                            false, true);
                 } else {
                     // Kirim penolakan ke pengirim
-                    String rejectMsg = String.format("FILE_REJECT|%s", fileId);
+                    String rejectMsg = String.format("FILE_REJECT|%s|USER_REJECTED", fileId);
                     conn.sendLine(rejectMsg);
 
                     controller.addMessageBubble(
@@ -183,42 +307,63 @@ public class FileTransferManager {
         });
     }
 
-    // Handle incoming file chunk
-// Di FileTransferManager.java, perbaiki method handleFileChunk():
-    public void handleFileChunk(String fileId, int chunkNumber, String encodedChunk) {
+    // Handle incoming file chunk - DIPERBAIKI
+    public void handleFileChunk(String fileId, int chunkNumber, long totalChunks, String encodedChunk) {
         FileTransfer transfer = pendingDownloads.get(fileId);
-        if (transfer == null) return;
+        if (transfer == null) {
+            System.err.println("No pending download for fileId: " + fileId);
+            return;
+        }
 
         try {
             byte[] chunkData = Base64.getDecoder().decode(encodedChunk);
-            // PERBAIKI DISINI: Parameter urutan benar
             transfer.writeChunk(chunkData, chunkNumber);
 
-            // Update progress bar
-            controller.updateDownloadProgress(fileId, transfer.getProgress());
+            // Update progress
+            double progress = (double) (chunkNumber + 1) / totalChunks;
+            controller.updateDownloadProgress(fileId, progress);
+
+            // Log setiap 10% progress
+            if (chunkNumber % Math.max(1, (int)(totalChunks / 10)) == 0) {
+                System.out.println("Download progress for " + transfer.getFileName() +
+                        ": " + String.format("%.0f%%", progress * 100));
+            }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("Error handling file chunk " + chunkNumber + " for " + fileId +
+                    ": " + e.getMessage());
         }
     }
 
-    // Handle end of file transfer
-// Di method handleFileEnd(), tambahkan opsi untuk membuka folder
+    // Handle end of file transfer - DIPERBAIKI
     public void handleFileEnd(String fileId, PeerConnection conn) {
         FileTransfer transfer = pendingDownloads.remove(fileId);
         if (transfer != null) {
             try {
-                // Panggil complete() yang sekarang return path
+                // Simpan file
                 String savedPath = transfer.complete(downloadDirectory);
 
-                Platform.runLater(() -> {
-                    controller.addMessageBubble(
-                            "[System] File '" + transfer.getFileName() +
-                                    "' downloaded successfully!\nLocation: " + savedPath,
-                            false, true);
+                // Verifikasi file
+                boolean verified = verifyFile(savedPath, transfer.getExpectedChecksum());
 
-                    // Tampilkan notifikasi dengan tombol aksi
-                    showDownloadCompleteDialog(transfer.getFileName(), savedPath);
+                Platform.runLater(() -> {
+                    if (verified) {
+                        controller.addMessageBubble(
+                                "[System] ✓ File '" + transfer.getFileName() +
+                                        "' downloaded successfully!\nSaved to: " + savedPath,
+                                false, true);
+
+                        // Tampilkan dialog sukses
+                        showDownloadCompleteDialog(transfer.getFileName(), savedPath, true);
+                    } else {
+                        controller.addMessageBubble(
+                                "[Warning] File '" + transfer.getFileName() +
+                                        "' downloaded but checksum verification failed!",
+                                false, true);
+
+                        // Tampilkan dialog warning
+                        showDownloadCompleteDialog(transfer.getFileName(), savedPath, false);
+                    }
 
                     // Hapus progress bar
                     controller.removeDownloadProgress(fileId);
@@ -229,88 +374,24 @@ public class FileTransferManager {
                     controller.addMessageBubble(
                             "[Error] Failed to save file: " + e.getMessage(),
                             false, true);
+                    controller.removeDownloadProgress(fileId);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    controller.addMessageBubble(
+                            "[Error] File transfer error: " + e.getMessage(),
+                            false, true);
+                    controller.removeDownloadProgress(fileId);
                 });
             }
         }
     }
-    // Method untuk menampilkan dialog setelah download selesai
-// Method untuk menampilkan dialog setelah download selesai
-    private void showDownloadCompleteDialog(String fileName, String filePath) {
-        Platform.runLater(() -> {
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("Download Complete");
-            alert.setHeaderText("File '" + fileName + "' has been downloaded");
-            alert.setContentText("File saved to:\n" + filePath);
 
-            // Tambahkan custom buttons
-            ButtonType openFileButton = new ButtonType("Open File");
-            ButtonType openFolderButton = new ButtonType("Open Folder");
-            ButtonType okButton = new ButtonType("OK", ButtonBar.ButtonData.OK_DONE);
-
-            alert.getButtonTypes().setAll(openFileButton, openFolderButton, okButton);
-
-            alert.showAndWait().ifPresent(buttonType -> {
-                try {
-                    File file = new File(filePath);
-                    File folder = file.getParentFile();
-
-                    if (buttonType == openFileButton) {
-                        // Buka file langsung
-                        if (Desktop.isDesktopSupported()) {
-                            Desktop desktop = Desktop.getDesktop();
-                            if (file.exists()) {
-                                desktop.open(file);
-                            }
-                        }
-                    } else if (buttonType == openFolderButton) {
-                        // Buka folder yang berisi file
-                        if (Desktop.isDesktopSupported()) {
-                            Desktop desktop = Desktop.getDesktop();
-                            if (folder.exists()) {
-                                desktop.open(folder);
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            });
-        });
-    }
-    // Tambahkan method untuk mendapatkan lokasi file yang sudah disave
-    private String getActualSavedPath(String fileName) {
-        Path downloadPath = Paths.get(downloadDirectory);
-        Path filePath = downloadPath.resolve(fileName);
-
-        // Cek apakah file ada dengan nama ini
-        if (Files.exists(filePath)) {
-            return filePath.toString();
-        }
-
-        // Cek file dengan penomoran (1), (2), dst
-        int counter = 1;
-        while (true) {
-            String nameWithoutExt = fileName.lastIndexOf('.') > 0 ?
-                    fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-            String ext = fileName.lastIndexOf('.') > 0 ?
-                    fileName.substring(fileName.lastIndexOf('.')) : "";
-            Path numberedPath = downloadPath.resolve(
-                    nameWithoutExt + " (" + counter + ")" + ext);
-
-            if (Files.exists(numberedPath)) {
-                return numberedPath.toString();
-            }
-
-            if (counter > 100) break; // Batasan untuk mencegah infinite loop
-            counter++;
-        }
-
-        return downloadDirectory + fileName;
-    }
     // Handle file acceptance from receiver
     public void handleFileAccept(String fileId, PeerConnection conn) {
         FileTransfer transfer = pendingUploads.get(fileId);
         if (transfer != null) {
+            transfer.setAccepted(true);
             Platform.runLater(() -> {
                 controller.addMessageBubble(
                         "[System] " + conn.getRemoteName() + " accepted your file '" +
@@ -321,20 +402,94 @@ public class FileTransferManager {
     }
 
     // Handle file rejection from receiver
-    public void handleFileReject(String fileId, PeerConnection conn) {
-        FileTransfer transfer = pendingUploads.get(fileId);
+    public void handleFileReject(String fileId, String reason, PeerConnection conn) {
+        FileTransfer transfer = pendingUploads.remove(fileId);
         if (transfer != null) {
-            pendingUploads.remove(fileId);
             Platform.runLater(() -> {
+                String reasonMsg = reason != null ? " (" + reason + ")" : "";
                 controller.addMessageBubble(
                         "[System] " + conn.getRemoteName() + " rejected your file '" +
-                                transfer.getFileName() + "'",
+                                transfer.getFileName() + "'" + reasonMsg,
                         false, true);
             });
         }
     }
 
-    // Format file size untuk display
+    // Method untuk menampilkan dialog setelah download selesai
+    private void showDownloadCompleteDialog(String fileName, String filePath, boolean success) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle(success ? "Download Complete" : "Download Warning");
+            alert.setHeaderText(success ?
+                    "✓ File '" + fileName + "' Downloaded Successfully" :
+                    "⚠ File '" + fileName + "' Downloaded (Verification Failed)");
+
+            String content = "File saved to:\n" + filePath +
+                    "\n\nSize: " + formatFileSize(new File(filePath).length());
+
+            if (!success) {
+                content += "\n\n⚠ Warning: File integrity check failed!\n" +
+                        "The file may be corrupted.";
+            }
+
+            alert.setContentText(content);
+
+            ButtonType openFolderButton = new ButtonType("Open Folder");
+            ButtonType openFileButton = new ButtonType("Open File");
+            ButtonType okButton = new ButtonType("OK");
+
+            alert.getButtonTypes().setAll(openFolderButton, openFileButton, okButton);
+
+            alert.showAndWait().ifPresent(buttonType -> {
+                try {
+                    File file = new File(filePath);
+                    File folder = file.getParentFile();
+
+                    if (buttonType == openFileButton && file.exists()) {
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop.getDesktop().open(file);
+                        }
+                    } else if (buttonType == openFolderButton && folder.exists()) {
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop.getDesktop().open(folder);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        });
+    }
+
+    // Helper methods
+    private String getFileChecksum(File file) {
+        // Simple checksum untuk verifikasi
+        try (FileInputStream fis = new FileInputStream(file)) {
+            long checksum = 0;
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                for (int i = 0; i < bytesRead; i++) {
+                    checksum += buffer[i] & 0xFF;
+                }
+            }
+            return Long.toString(checksum);
+        } catch (IOException e) {
+            return "0";
+        }
+    }
+
+    private boolean verifyFile(String filePath, String expectedChecksum) {
+        if (expectedChecksum == null || expectedChecksum.equals("0")) {
+            return true; // Skip verification if no checksum
+        }
+
+        File file = new File(filePath);
+        String actualChecksum = getFileChecksum(file);
+        return expectedChecksum.equals(actualChecksum);
+    }
+
     private String formatFileSize(long size) {
         if (size < 1024) return size + " B";
         else if (size < 1024 * 1024) return String.format("%.1f KB", size / 1024.0);
