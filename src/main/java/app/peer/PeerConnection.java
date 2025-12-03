@@ -1,5 +1,7 @@
 package main.java.app.peer;
 
+import javafx.application.Platform;
+
 import java.io.*;
 import java.net.Socket;
 import java.util.Arrays;
@@ -95,14 +97,20 @@ public class PeerConnection {
                         if (p.length >= 3) {
                             String fileName = p[1];
                             long fileSize = Long.parseLong(p[2]);
-                            controller.onIncomingFileStart(fileName, fileSize, this);
+                            Platform.runLater(() ->
+                                    controller.onIncomingFileStart(fileName, fileSize, this)
+                            );
+
                         }
                         continue;
                     }
 
                     if (line.startsWith("FILEDATA|")) {
                         String base64 = safeSubstring(line, 9);
-                        controller.onIncomingFileData(base64, this);
+                        Platform.runLater(() ->
+                                controller.onIncomingFileData(base64, this)
+                        );
+
                         continue;
                     }
 
