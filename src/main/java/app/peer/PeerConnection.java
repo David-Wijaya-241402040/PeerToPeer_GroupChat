@@ -85,6 +85,50 @@ public class PeerConnection {
                         continue;
                     }
 
+                    if (line.startsWith("FILE_META|")) {
+                        String[] parts = line.split("\\|", 5);
+                        if (parts.length == 5) {
+                            String fileId = parts[1];
+                            String fileName = parts[2];
+                            long fileSize = Long.parseLong(parts[3]);
+                            String sender = parts[4];
+
+                            // Panggil controller untuk handle file metadata
+                            controller.onFileMetadata(fileId, fileName, fileSize, sender, this);
+                        }
+                        continue;
+                    }
+
+                    if (line.startsWith("FILE_CHUNK|")) {
+                        String[] parts = line.split("\\|", 4);
+                        if (parts.length == 4) {
+                            String fileId = parts[1];
+                            int chunkNumber = Integer.parseInt(parts[2]);
+                            String encodedChunk = parts[3];
+
+                            controller.onFileChunk(fileId, chunkNumber, encodedChunk, this);
+                        }
+                        continue;
+                    }
+
+                    if (line.startsWith("FILE_END|")) {
+                        String fileId = safeSubstring(line, 9);
+                        controller.onFileEnd(fileId, this);
+                        continue;
+                    }
+
+                    if (line.startsWith("FILE_ACCEPT|")) {
+                        String fileId = safeSubstring(line, 12);
+                        controller.onFileAccept(fileId, this);
+                        continue;
+                    }
+
+                    if (line.startsWith("FILE_REJECT|")) {
+                        String fileId = safeSubstring(line, 12);
+                        controller.onFileReject(fileId, this);
+                        continue;
+                    }
+
                     // fallback: treat as chat from unknown (legacy)
                     controller.onPeerMessage((remoteName != null ? remoteName : "Unknown") + ": " + line, this);
                 }

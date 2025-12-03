@@ -7,6 +7,15 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
+import javafx.scene.control.ChoiceDialog;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Label;
+import javafx.geometry.Pos;
+import javafx.scene.layout.HBox;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 import java.io.IOException;
 import java.net.*;
@@ -21,6 +30,7 @@ public class PeerController {
     @FXML private Button btnConnect;
     @FXML private Button btnDisconnect;
     @FXML private Button btnSend;
+    @FXML private Button btnFile;
     @FXML private ScrollPane scrollBox;
     @FXML private VBox messageBox;
 
@@ -37,6 +47,10 @@ public class PeerController {
     private final Map<String, Long> lastTypingTime = new HashMap<>();
     private volatile boolean typingSent = false;
 
+    // Di deklarasi field, TAMBAHKAN:
+    private FileTransferManager fileTransferManager;
+    private final Map<String, HBox> downloadProgressBars = new HashMap<>();
+
     @FXML
     private void initialize() {
         usernameField.setDisable(false);
@@ -46,6 +60,7 @@ public class PeerController {
         chatField.setOnAction(event -> onSend());
 
         btnSend.setDisable(true);
+        btnFile.setVisible(true);
 
         btnDisconnect.setDisable(true);
         btnDisconnect.setManaged(false);
@@ -56,6 +71,9 @@ public class PeerController {
         btnConnect.setVisible(true);
 
         chatField.textProperty().addListener((pbs, oldV, newV) -> onTyping());
+
+        // Inisialisasi FileTransferManager
+        fileTransferManager = new FileTransferManager(this);
     }
 
     private static class ReconnectInfo {
@@ -68,6 +86,138 @@ public class PeerController {
             this.port = port;
             this.remoteName = remoteName;
         }
+    }
+
+    // Method untuk mengakses peers dari FileTransferManager
+    public Map<String, PeerConnection> getPeers() {
+        synchronized (peers) {
+            return new HashMap<>(peers);
+        }
+    }
+
+    // Handler untuk file transfer - TAMBAHKAN method ini
+    public void onFileMetadata(String fileId, String fileName, long fileSize, String sender, PeerConnection conn) {
+        fileTransferManager.handleFileMetadata(fileId, fileName, fileSize, sender, conn);
+    }
+
+    public void onFileChunk(String fileId, int chunkNumber, String encodedChunk, PeerConnection conn) {
+        fileTransferManager.handleFileChunk(fileId, chunkNumber, encodedChunk);
+    }
+
+    public void onFileEnd(String fileId, PeerConnection conn) {
+        fileTransferManager.handleFileEnd(fileId, conn);
+    }
+
+    public void onFileAccept(String fileId, PeerConnection conn) {
+        fileTransferManager.handleFileAccept(fileId, conn);
+    }
+
+    public void onFileReject(String fileId, PeerConnection conn) {
+        fileTransferManager.handleFileReject(fileId, conn);
+    }
+
+    // Method untuk memilih dan mengirim file
+    @FXML
+    private void onSendFile() {
+        if (peers.isEmpty()) {
+            showAlert("No Peers", "There are no connected peers to send files to.");
+            return;
+        }
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select File to Send");
+
+        // Filter untuk tipe file
+        FileChooser.ExtensionFilter allFiles = new FileChooser.ExtensionFilter("All Files", "*.*");
+        FileChooser.ExtensionFilter images = new FileChooser.ExtensionFilter("Images",
+                "*.png", "*.jpg", "*.jpeg", "*.gif");
+        FileChooser.ExtensionFilter documents = new FileChooser.ExtensionFilter("Documents",
+                "*.txt", "*.pdf", "*.doc", "*.docx");
+        FileChooser.ExtensionFilter videos = new FileChooser.ExtensionFilter("Videos",
+                "*.mp4", "*.avi", "*.mkv", "*.mov");
+
+        fileChooser.getExtensionFilters().addAll(images, documents, videos, allFiles);
+
+        File selectedFile = fileChooser.showOpenDialog(null);
+
+        if (selectedFile != null) {
+            // Buat daftar penerima
+            List<String> recipients = new ArrayList<>();
+            recipients.add("All Peers");
+
+            synchronized (peers) {
+                recipients.addAll(peers.keySet());
+            }
+
+            // Tampilkan dialog untuk memilih penerima
+            ChoiceDialog<String> recipientDialog = new ChoiceDialog<>("All Peers", recipients);
+            recipientDialog.setTitle("Send File To");
+            recipientDialog.setHeaderText("Select recipient");
+            recipientDialog.setContentText("Choose who to send the file:");
+
+            recipientDialog.showAndWait().ifPresent(recipient -> {
+                if (recipient.equals("All Peers")) {
+                    fileTransferManager.sendFileToAll(selectedFile);
+                    addMessageBubble("[System] Sending file '" + selectedFile.getName() + "' to all peers",
+                            false, true);
+                } else {
+                    synchronized (peers) {
+                        PeerConnection peer = peers.get(recipient);
+                        if (peer != null) {
+                            fileTransferManager.sendFile(selectedFile, peer);
+                            addMessageBubble("[System] Sending file '" + selectedFile.getName() + "' to " + recipient,
+                                    false, true);
+                        }
+                    }
+                }
+            });
+        }
+    }
+    // Method untuk menampilkan progress bar download - TAMBAHKAN method ini
+    public void showDownloadProgress(String fileId, String fileName, String sender, long fileSize) {
+        Platform.runLater(() -> {
+            Label fileNameLabel = new Label("Downloading: " + fileName + " (" + formatFileSize(fileSize) + ")");
+            ProgressBar progressBar = new ProgressBar(0);
+            progressBar.setPrefWidth(250);
+
+            HBox progressContainer = new HBox(10, fileNameLabel, progressBar);
+            progressContainer.setPadding(new Insets(5));
+            progressContainer.setAlignment(Pos.CENTER_LEFT);
+
+            downloadProgressBars.put(fileId, progressContainer);
+            messageBox.getChildren().add(progressContainer);
+
+            scrollBox.setVvalue(1.0);
+        });
+    }
+
+    // Update progress bar - TAMBAHKAN method ini
+    public void updateDownloadProgress(String fileId, double progress) {
+        Platform.runLater(() -> {
+            HBox container = downloadProgressBars.get(fileId);
+            if (container != null && container.getChildren().size() > 1) {
+                ProgressBar progressBar = (ProgressBar) container.getChildren().get(1);
+                progressBar.setProgress(progress);
+            }
+        });
+    }
+
+    // Hapus progress bar setelah selesai - TAMBAHKAN method ini
+    public void removeDownloadProgress(String fileId) {
+        Platform.runLater(() -> {
+            HBox container = downloadProgressBars.remove(fileId);
+            if (container != null) {
+                messageBox.getChildren().remove(container);
+            }
+        });
+    }
+
+    // Helper untuk format file size - TAMBAHKAN method ini
+    private String formatFileSize(long size) {
+        if (size < 1024) return size + " B";
+        else if (size < 1024 * 1024) return String.format("%.1f KB", size / 1024.0);
+        else if (size < 1024 * 1024 * 1024) return String.format("%.1f MB", size / (1024.0 * 1024.0));
+        else return String.format("%.1f GB", size / (1024.0 * 1024.0 * 1024.0));
     }
 
     private boolean isMannuallyDisconnect(ReconnectInfo info) {
@@ -261,6 +411,7 @@ public class PeerController {
                 Platform.runLater(() -> {
                     chatField.setDisable(false);
                     btnSend.setDisable(false);
+                    btnFile.setDisable(false);
 
                     btnDisconnect.setDisable(false);
                     btnDisconnect.setManaged(true);
@@ -533,5 +684,8 @@ public class PeerController {
     public void safeShutdown() {
         closeAllPeers();
         stopListener();
+        if (fileTransferManager != null) {
+            fileTransferManager.shutdown();
+        }
     }
 }

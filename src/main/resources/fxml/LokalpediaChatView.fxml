@@ -99,14 +99,23 @@
                      </children></HBox>
                </children>
             </AnchorPane>
-            <HBox layoutX="-8.0" layoutY="369.0" prefHeight="27.0" prefWidth="200.0" AnchorPane.bottomAnchor="20.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="20.0" AnchorPane.topAnchor="350.0">
+            <HBox layoutX="-8.0" layoutY="369.0" prefHeight="27.0" prefWidth="200.0" spacing="5.0" AnchorPane.bottomAnchor="20.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="20.0" AnchorPane.topAnchor="350.0">
                <children>
                   <TextField fx:id="chatField" prefHeight="30.0" prefWidth="282.0">
                      <HBox.margin>
-                        <Insets right="5.0" />
+                        <Insets />
                      </HBox.margin>
                   </TextField>
-                  <Button fx:id="btnSend" mnemonicParsing="false" onAction="#onSend" prefHeight="31.0" prefWidth="68.0" text="Send">
+                  <Button fx:id="btnFile" mnemonicParsing="false" onAction="#onSendFile" prefHeight="34.0" prefWidth="33.0">
+                     <graphic>
+                        <ImageView fitHeight="20.0" fitWidth="69.0" pickOnBounds="true" preserveRatio="true">
+                           <image>
+                              <Image url="@../images/codex--file.png" />
+                           </image>
+                        </ImageView>
+                     </graphic>
+                  </Button>
+                  <Button fx:id="btnSend" mnemonicParsing="false" onAction="#onSend" prefHeight="30.0" prefWidth="86.0" text="Send">
                      <font>
                         <Font name="Georgia" size="10.0" />
                      </font>
