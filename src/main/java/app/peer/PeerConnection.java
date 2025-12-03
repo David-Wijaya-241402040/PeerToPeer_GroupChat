@@ -10,7 +10,7 @@ public class PeerConnection {
     private final Socket socket;
     private final PeerController controller;
     private BufferedReader reader;
-    private PrintWriter writer;
+    private BufferedWriter writer;
 
     private volatile boolean active = true;
     private String remoteName = "Unknown";
@@ -27,7 +27,7 @@ public class PeerConnection {
         this.controller = controller;
 
         reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        writer = new PrintWriter(socket.getOutputStream(), true);
+        this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
 
         startReader();
         startPingSender();
@@ -163,12 +163,14 @@ public class PeerConnection {
         lastSeen.set(System.currentTimeMillis());
     }
 
-    public void sendLine(String s) {
-        if (!active) return;
-        if(writer == null) return;
-        writer.println(s);
-        writer.flush();
+    public synchronized void sendLine(String message) {
+        try {
+            writer.write(message);
+            writer.write("\n");  // newline wajib!
+            writer.flush();      // WAJIB flush manual!
+        } catch (Exception ignored) {}
     }
+
 
     public void sendFile(String fileName, byte[] data) {
         if (!active) return;
