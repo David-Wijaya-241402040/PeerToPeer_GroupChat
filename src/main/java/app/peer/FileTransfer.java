@@ -74,7 +74,7 @@ public class FileTransfer {
                 totalReceivedBytes + "/" + fileSize + " bytes");
     }
 
-    public synchronized void complete(String downloadDirectory) throws IOException {
+    public synchronized String complete(String downloadDirectory) throws IOException {
         // Cek jika folder download ada, jika tidak buat
         Path downloadPath = Paths.get(downloadDirectory);
         if (!Files.exists(downloadPath)) {
@@ -105,8 +105,10 @@ public class FileTransfer {
 
         // Bersihkan chunks dari memory
         chunks.clear();
-    }
 
+        // Return full path dari file yang disimpan
+        return filePath.toString();
+    }
     public String getFileName() {
         return fileName;
     }

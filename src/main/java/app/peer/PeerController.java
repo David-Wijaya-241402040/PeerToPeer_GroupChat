@@ -49,7 +49,7 @@ public class PeerController {
 
     // Di deklarasi field, TAMBAHKAN:
     private FileTransferManager fileTransferManager;
-    private final Map<String, HBox> downloadProgressBars = new HashMap<>();
+    private final Map<String, ProgressBarData> downloadProgressBars = new HashMap<>();
 
     @FXML
     private void initialize() {
@@ -60,7 +60,7 @@ public class PeerController {
         chatField.setOnAction(event -> onSend());
 
         btnSend.setDisable(true);
-        btnFile.setVisible(true);
+        btnFile.setDisable(true);
 
         btnDisconnect.setDisable(true);
         btnDisconnect.setManaged(false);
@@ -174,40 +174,83 @@ public class PeerController {
         }
     }
     // Method untuk menampilkan progress bar download - TAMBAHKAN method ini
+// Di PeerController.java, update method showDownloadProgress:
     public void showDownloadProgress(String fileId, String fileName, String sender, long fileSize) {
         Platform.runLater(() -> {
-            Label fileNameLabel = new Label("Downloading: " + fileName + " (" + formatFileSize(fileSize) + ")");
-            ProgressBar progressBar = new ProgressBar(0);
-            progressBar.setPrefWidth(250);
-
-            HBox progressContainer = new HBox(10, fileNameLabel, progressBar);
+            // Buat HBox untuk progress
+            HBox progressContainer = new HBox(10);
             progressContainer.setPadding(new Insets(5));
             progressContainer.setAlignment(Pos.CENTER_LEFT);
+            progressContainer.setStyle("-fx-background-color: #f0f0f0; -fx-background-radius: 5;");
 
-            downloadProgressBars.put(fileId, progressContainer);
+            // Icon file
+            Label fileIcon = new Label("📁");
+            fileIcon.setStyle("-fx-font-size: 16px;");
+
+            // Info file
+            VBox fileInfo = new VBox(2);
+            Label fileNameLabel = new Label(fileName);
+            fileNameLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+
+            Label fileDetails = new Label("From: " + sender + " | Size: " + formatFileSize(fileSize));
+            fileDetails.setStyle("-fx-font-size: 10px; -fx-text-fill: #666;");
+
+            fileInfo.getChildren().addAll(fileNameLabel, fileDetails);
+
+            // Progress bar
+            ProgressBar progressBar = new ProgressBar(0);
+            progressBar.setPrefWidth(200);
+
+            // Label persentase
+            Label percentLabel = new Label("0%");
+            percentLabel.setStyle("-fx-font-size: 11px; -fx-min-width: 35px;");
+
+            progressContainer.getChildren().addAll(fileIcon, fileInfo, progressBar, percentLabel);
+
+            // Simpan reference untuk update
+            downloadProgressBars.put(fileId, new ProgressBarData(progressContainer, progressBar, percentLabel));
             messageBox.getChildren().add(progressContainer);
 
             scrollBox.setVvalue(1.0);
         });
     }
 
-    // Update progress bar - TAMBAHKAN method ini
+    // Class helper untuk menyimpan data progress bar
+    private static class ProgressBarData {
+        HBox container;
+        ProgressBar progressBar;
+        Label percentLabel;
+
+        ProgressBarData(HBox container, ProgressBar progressBar, Label percentLabel) {
+            this.container = container;
+            this.progressBar = progressBar;
+            this.percentLabel = percentLabel;
+        }
+    }
+
+    // Update method updateDownloadProgress:
     public void updateDownloadProgress(String fileId, double progress) {
         Platform.runLater(() -> {
-            HBox container = downloadProgressBars.get(fileId);
-            if (container != null && container.getChildren().size() > 1) {
-                ProgressBar progressBar = (ProgressBar) container.getChildren().get(1);
-                progressBar.setProgress(progress);
+            ProgressBarData data = downloadProgressBars.get(fileId);
+            if (data != null) {
+                data.progressBar.setProgress(progress);
+                data.percentLabel.setText(String.format("%.0f%%", progress * 100));
+
+                // Jika selesai, ubah warna progress bar
+                if (progress >= 1.0) {
+                    data.progressBar.setStyle("-fx-accent: #4CAF50;"); // Hijau saat selesai
+                    data.percentLabel.setText("✓");
+                }
             }
         });
     }
-
     // Hapus progress bar setelah selesai - TAMBAHKAN method ini
+// Hapus progress bar setelah selesai
     public void removeDownloadProgress(String fileId) {
         Platform.runLater(() -> {
-            HBox container = downloadProgressBars.remove(fileId);
-            if (container != null) {
-                messageBox.getChildren().remove(container);
+            ProgressBarData data = downloadProgressBars.remove(fileId);
+            if (data != null && data.container != null) {
+                messageBox.getChildren().remove(data.container);
             }
         });
     }

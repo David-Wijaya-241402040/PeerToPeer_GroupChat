@@ -3,18 +3,19 @@ package main.java.app.peer;
 
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.awt.Desktop;
 
 public class FileTransferManager {
     private final PeerController controller;
@@ -202,17 +203,22 @@ public class FileTransferManager {
     }
 
     // Handle end of file transfer
+// Di method handleFileEnd(), tambahkan opsi untuk membuka folder
     public void handleFileEnd(String fileId, PeerConnection conn) {
         FileTransfer transfer = pendingDownloads.remove(fileId);
         if (transfer != null) {
             try {
-                transfer.complete(downloadDirectory);
+                // Panggil complete() yang sekarang return path
+                String savedPath = transfer.complete(downloadDirectory);
 
                 Platform.runLater(() -> {
                     controller.addMessageBubble(
                             "[System] File '" + transfer.getFileName() +
-                                    "' downloaded successfully to: " + downloadDirectory,
+                                    "' downloaded successfully!\nLocation: " + savedPath,
                             false, true);
+
+                    // Tampilkan notifikasi dengan tombol aksi
+                    showDownloadCompleteDialog(transfer.getFileName(), savedPath);
 
                     // Hapus progress bar
                     controller.removeDownloadProgress(fileId);
@@ -227,7 +233,80 @@ public class FileTransferManager {
             }
         }
     }
+    // Method untuk menampilkan dialog setelah download selesai
+// Method untuk menampilkan dialog setelah download selesai
+    private void showDownloadCompleteDialog(String fileName, String filePath) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Download Complete");
+            alert.setHeaderText("File '" + fileName + "' has been downloaded");
+            alert.setContentText("File saved to:\n" + filePath);
 
+            // Tambahkan custom buttons
+            ButtonType openFileButton = new ButtonType("Open File");
+            ButtonType openFolderButton = new ButtonType("Open Folder");
+            ButtonType okButton = new ButtonType("OK", ButtonBar.ButtonData.OK_DONE);
+
+            alert.getButtonTypes().setAll(openFileButton, openFolderButton, okButton);
+
+            alert.showAndWait().ifPresent(buttonType -> {
+                try {
+                    File file = new File(filePath);
+                    File folder = file.getParentFile();
+
+                    if (buttonType == openFileButton) {
+                        // Buka file langsung
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop desktop = Desktop.getDesktop();
+                            if (file.exists()) {
+                                desktop.open(file);
+                            }
+                        }
+                    } else if (buttonType == openFolderButton) {
+                        // Buka folder yang berisi file
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop desktop = Desktop.getDesktop();
+                            if (folder.exists()) {
+                                desktop.open(folder);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        });
+    }
+    // Tambahkan method untuk mendapatkan lokasi file yang sudah disave
+    private String getActualSavedPath(String fileName) {
+        Path downloadPath = Paths.get(downloadDirectory);
+        Path filePath = downloadPath.resolve(fileName);
+
+        // Cek apakah file ada dengan nama ini
+        if (Files.exists(filePath)) {
+            return filePath.toString();
+        }
+
+        // Cek file dengan penomoran (1), (2), dst
+        int counter = 1;
+        while (true) {
+            String nameWithoutExt = fileName.lastIndexOf('.') > 0 ?
+                    fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+            String ext = fileName.lastIndexOf('.') > 0 ?
+                    fileName.substring(fileName.lastIndexOf('.')) : "";
+            Path numberedPath = downloadPath.resolve(
+                    nameWithoutExt + " (" + counter + ")" + ext);
+
+            if (Files.exists(numberedPath)) {
+                return numberedPath.toString();
+            }
+
+            if (counter > 100) break; // Batasan untuk mencegah infinite loop
+            counter++;
+        }
+
+        return downloadDirectory + fileName;
+    }
     // Handle file acceptance from receiver
     public void handleFileAccept(String fileId, PeerConnection conn) {
         FileTransfer transfer = pendingUploads.get(fileId);
