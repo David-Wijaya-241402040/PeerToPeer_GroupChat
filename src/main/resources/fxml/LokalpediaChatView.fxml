@@ -12,11 +12,11 @@
 <?import javafx.scene.text.Font?>
 <?import javafx.scene.text.Text?>
 
-<AnchorPane prefHeight="400.0" prefWidth="600.0" style="-fx-background-color: #FFF5EE;" xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1" fx:controller="main.java.app.peer.PeerController">
+<AnchorPane prefHeight="669.0" prefWidth="914.0" style="-fx-background-color: #FFF5EE;" xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1" fx:controller="main.java.app.peer.PeerController">
    <children>
-      <AnchorPane layoutX="182.0" layoutY="-45.0" prefHeight="400.0" prefWidth="256.0" style="-fx-background-color: white;" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="366.0" AnchorPane.topAnchor="0.0">
+      <AnchorPane layoutX="182.0" layoutY="-45.0" prefHeight="669.0" prefWidth="346.0" style="-fx-background-color: white;" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="568.0" AnchorPane.topAnchor="0.0">
          <children>
-            <ImageView fitHeight="150.0" fitWidth="200.0" pickOnBounds="true" preserveRatio="true" AnchorPane.bottomAnchor="303.1224479675293" AnchorPane.leftAnchor="17.0" AnchorPane.rightAnchor="17.0" AnchorPane.topAnchor="62.0">
+            <ImageView fitHeight="150.0" fitWidth="200.0" layoutX="20.0" layoutY="62.0" pickOnBounds="true" preserveRatio="true" AnchorPane.bottomAnchor="573.1224479675293" AnchorPane.leftAnchor="73.0" AnchorPane.rightAnchor="73.0" AnchorPane.topAnchor="62.0">
                <image>
                   <Image url="@../images/lokallogo.png" />
                </image>
@@ -49,7 +49,7 @@
                         </TextField>
                      </children>
                   </VBox>
-                  <VBox layoutX="-69.0" layoutY="15.0" prefHeight="50.0" prefWidth="196.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
+                  <VBox layoutX="-69.0" layoutY="15.0" prefHeight="50.0" prefWidth="312.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
                      <padding>
                         <Insets top="3.0" />
                      </padding>
@@ -66,12 +66,12 @@
                         </TextField>
                      </children>
                   </VBox>
-                  <Button fx:id="btnConnect" layoutX="93.0" layoutY="164.0" mnemonicParsing="false" onAction="#onConnect" prefHeight="20.0" prefWidth="90.0" text="Connect" AnchorPane.leftAnchor="110.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="130.0">
+                  <Button fx:id="btnConnect" layoutX="189.0" layoutY="164.0" mnemonicParsing="false" onAction="#onConnect" prefHeight="25.0" prefWidth="123.0" text="Connect" AnchorPane.leftAnchor="189.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="130.0">
                      <font>
                         <Font name="Georgia" size="10.0" />
                      </font>
                   </Button>
-                  <Button fx:id="btnDisconnect" layoutX="76.0" layoutY="170.0" mnemonicParsing="false" onAction="#onDisconnect" prefHeight="20.0" prefWidth="90.0" text="Disconnect" AnchorPane.leftAnchor="110.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="130.0">
+                  <Button fx:id="btnDisconnect" layoutX="189.0" layoutY="170.0" mnemonicParsing="false" onAction="#onDisconnect" prefHeight="25.0" prefWidth="123.0" text="Disconnect" AnchorPane.leftAnchor="189.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="130.0">
                      <font>
                         <Font name="Georgia" size="10.0" />
                      </font>
@@ -80,11 +80,11 @@
             </AnchorPane>
          </children>
       </AnchorPane>
-      <AnchorPane layoutX="4.0" layoutY="17.0" prefHeight="400.0" prefWidth="596.0" style="-fx-background-color: white;" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="234.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
+      <AnchorPane layoutX="345.0" layoutY="17.0" prefHeight="669.0" prefWidth="569.0" style="-fx-background-color: white;" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="345.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
          <children>
             <AnchorPane prefHeight="200.0" prefWidth="200.0" AnchorPane.bottomAnchor="60.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="20.0" AnchorPane.topAnchor="20.0">
                <children>
-                  <ScrollPane fx:id="scrollBox" layoutY="27.0" prefHeight="293.0" prefWidth="346.0" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="27.0">
+                  <ScrollPane fx:id="scrollBox" layoutX="23.0" layoutY="27.0" prefHeight="293.0" prefWidth="346.0" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="27.0">
                      <content>
                         <VBox fx:id="messageBox" prefHeight="196.0" prefWidth="331.0" />
                      </content>
@@ -99,14 +99,23 @@
                      </children></HBox>
                </children>
             </AnchorPane>
-            <HBox layoutX="-8.0" layoutY="369.0" prefHeight="27.0" prefWidth="200.0" AnchorPane.bottomAnchor="20.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="20.0" AnchorPane.topAnchor="350.0">
+            <HBox layoutX="-8.0" layoutY="615.0" prefHeight="34.0" prefWidth="549.0" spacing="5.0" AnchorPane.bottomAnchor="20.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="20.0" AnchorPane.topAnchor="615.0">
                <children>
-                  <TextField fx:id="chatField" prefHeight="30.0" prefWidth="282.0">
+                  <TextField fx:id="chatField" prefHeight="34.0" prefWidth="434.0">
                      <HBox.margin>
-                        <Insets right="5.0" />
+                        <Insets />
                      </HBox.margin>
                   </TextField>
-                  <Button fx:id="btnSend" mnemonicParsing="false" onAction="#onSend" prefHeight="31.0" prefWidth="68.0" text="Send">
+                  <Button fx:id="btnFile" mnemonicParsing="false" onAction="#onSendFile" prefHeight="34.0" prefWidth="33.0">
+                     <graphic>
+                        <ImageView fitHeight="25.0" fitWidth="63.0" pickOnBounds="true" preserveRatio="true">
+                           <image>
+                              <Image url="@../images/codex--file.png" />
+                           </image>
+                        </ImageView>
+                     </graphic>
+                  </Button>
+                  <Button fx:id="btnSend" mnemonicParsing="false" onAction="#onSend" prefHeight="34.0" prefWidth="72.0" text="Send">
                      <font>
                         <Font name="Georgia" size="10.0" />
                      </font>
